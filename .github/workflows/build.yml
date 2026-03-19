@@ -1,5 +1,5 @@
 urbex-walkie/
-├─ main.py               ← código Kivy + Pyjnius para audio
+├─ main.py                ← código Kivy sin Pyjnius ni sounddevice
 └─ .github/
     └─ workflows/
-        └─ build.yml    ← workflow para GitHub Actions
+        └─ build.yml     ← workflow para GitHub Actions
