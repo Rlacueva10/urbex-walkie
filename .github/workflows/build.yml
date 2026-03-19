@@ -1,38 +1,77 @@
-name: Build APK
+import socket
+import threading
+import sounddevice as sd
+import numpy as np
+from kivy.app import App
+from kivy.uix.button import Button
 
-on:
-  push:
-    branches: [ "main" ]
+# CONFIG RED
+UDP_IP = "224.1.1.1"   # Multicast
+UDP_PORT = 5005
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+# AUDIO CONFIG
+CHUNK = 1024
+RATE = 44100
+CHANNELS = 1
 
-    steps:
-    - uses: actions/checkout@v3
+class UrbexWalkie(App):
+    def build(self):
+        self.transmitiendo = False
 
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y python3-pip git zip unzip openjdk-17-jdk
-        pip install buildozer cython
+        self.btn = Button(
+            text='MANTÉN PARA HABLAR',
+            font_size='35sp',
+            bold=True,
+            background_color=(1, 0.5, 0, 1)
+        )
 
-    - name: Init buildozer
-      run: buildozer init
+        self.btn.bind(on_press=self.empezar_a_hablar)
+        self.btn.bind(on_release=self.parar_de_hablar)
 
-    - name: Configure buildozer
-      run: |
-        sed -i 's/title = .*/title = UrbexWalkie/' buildozer.spec
-        sed -i 's/package.name = .*/package.name = urbexwalkie/' buildozer.spec
-        sed -i 's/package.domain = .*/package.domain = org.test/' buildozer.spec
-        sed -i 's/requirements = .*/requirements = python3,kivy/' buildozer.spec
-        echo "android.permissions = INTERNET,RECORD_AUDIO" >> buildozer.spec
+        # Socket envío
+        self.sock_envio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock_envio.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
 
-    - name: Build APK
-      run: buildozer -v android debug
+        # Hilo para recibir audio
+        threading.Thread(target=self.escuchar_red, daemon=True).start()
 
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: apk
-        path: bin/*.apk
+        return self.btn
+
+    def empezar_a_hablar(self, instance):
+        self.transmitiendo = True
+        instance.text = "TRANSMITIENDO..."
+        instance.background_color = (0, 1, 0, 1)
+        threading.Thread(target=self.enviar_audio, daemon=True).start()
+
+    def parar_de_hablar(self, instance):
+        self.transmitiendo = False
+        instance.text = "MANTÉN PARA HABLAR"
+        instance.background_color = (1, 0.5, 0, 1)
+
+    def enviar_audio(self):
+        while self.transmitiendo:
+            audio = sd.rec(CHUNK, samplerate=RATE, channels=CHANNELS, dtype='int16')
+            sd.wait()
+            data = audio.tobytes()
+            try:
+                self.sock_envio.sendto(data, (UDP_IP, UDP_PORT))
+            except:
+                pass
+
+    def escuchar_red(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(('', UDP_PORT))
+        mreq = socket.inet_aton(UDP_IP) + socket.inet_aton('0.0.0.0')
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+        while True:
+            try:
+                data, addr = sock.recvfrom(2048)
+                if not self.transmitiendo:
+                    audio_np = np.frombuffer(data, dtype='int16')
+                    sd.play(audio_np, samplerate=RATE)
+            except:
+                pass
+
+if __name__ == '__main__':
+    UrbexWalkie().run()
